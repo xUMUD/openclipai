@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Download, Search, Wand2, Film, CheckCircle2, Loader2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import type { TaskStatus } from "@/lib/api";
 
 interface ProcessingStep {
   id: string;
@@ -13,9 +14,19 @@ interface ProcessingStep {
 interface ProcessingViewProps {
   isActive: boolean;
   onComplete: () => void;
+  status?: TaskStatus | null;
 }
 
-export function ProcessingView({ isActive, onComplete }: ProcessingViewProps) {
+const STATUS_TO_STEP: Record<string, number> = {
+  pending: 0,
+  downloading: 0,
+  transcribing: 1,
+  analyzing: 2,
+  rendering: 3,
+  completed: 4,
+};
+
+export function ProcessingView({ isActive, onComplete, status }: ProcessingViewProps) {
   const [steps, setSteps] = useState<ProcessingStep[]>([
     { id: "download", label: "Downloading Video", icon: Download, status: "pending", progress: 0 },
     { id: "transcribe", label: "Transcribing Audio", icon: Wand2, status: "pending", progress: 0 },
@@ -23,12 +34,41 @@ export function ProcessingView({ isActive, onComplete }: ProcessingViewProps) {
     { id: "render", label: "Rendering Clips", icon: Film, status: "pending", progress: 0 },
   ]);
 
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [overallProgress, setOverallProgress] = useState(0);
 
+  // Sync with backend status if provided
   useEffect(() => {
-    if (!isActive) return;
+    if (!status) return;
 
+    const activeStepIndex = STATUS_TO_STEP[status.status] ?? 0;
+    
+    setSteps(prev => prev.map((step, index) => {
+      if (index < activeStepIndex) {
+        return { ...step, status: "complete" as const, progress: 100 };
+      } else if (index === activeStepIndex) {
+        return { 
+          ...step, 
+          status: "active" as const, 
+          progress: status.progress || Math.min(step.progress + 10, 95) 
+        };
+      }
+      return { ...step, status: "pending" as const, progress: 0 };
+    }));
+
+    if (status.status === "completed") {
+      setOverallProgress(100);
+      setTimeout(onComplete, 500);
+    } else {
+      setOverallProgress(status.progress || 0);
+    }
+  }, [status, onComplete]);
+
+  // Fallback simulation when no backend status
+  useEffect(() => {
+    if (status || !isActive) return;
+
+    let currentStepIndex = 0;
+    
     const interval = setInterval(() => {
       setSteps(prev => {
         const newSteps = [...prev];
@@ -49,7 +89,7 @@ export function ProcessingView({ isActive, onComplete }: ProcessingViewProps) {
         } else if (currentStep.status === "active") {
           currentStep.status = "complete";
           if (currentStepIndex < newSteps.length - 1) {
-            setCurrentStepIndex(prev => prev + 1);
+            currentStepIndex++;
           } else {
             clearInterval(interval);
             setTimeout(onComplete, 500);
@@ -61,12 +101,13 @@ export function ProcessingView({ isActive, onComplete }: ProcessingViewProps) {
     }, 150);
 
     return () => clearInterval(interval);
-  }, [isActive, currentStepIndex, onComplete]);
+  }, [isActive, status, onComplete]);
 
   useEffect(() => {
+    if (status) return;
     const totalProgress = steps.reduce((acc, step) => acc + step.progress, 0) / steps.length;
     setOverallProgress(totalProgress);
-  }, [steps]);
+  }, [steps, status]);
 
   return (
     <div className="w-full max-w-2xl mx-auto animate-fade-in">
